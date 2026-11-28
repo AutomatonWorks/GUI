@@ -73,8 +73,8 @@ def OverlayHotkeyKeys() -> list[Key]:
 def DevKeys(betaTestMode: bool = False) -> list[Key]:
     keys = [
         Key("Dev", 0),
-        Key("ShowPixelHK", "PgDn"),
-        Key("TestFunctionHK", "PgUp"),
+        Key("ShowPixelHK", "PgUp"),
+        Key("TestFunctionHK", "PgDn"),
         Key("KeyRecorderHK", "ScrollLock", "Start and stop recording keys and camera into a paste-ready script. Only while Dev is 1 and running from source."),
         Key("console_enabled", 1),
         Key("console_left_gap", 8),
