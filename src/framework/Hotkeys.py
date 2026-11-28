@@ -9,14 +9,11 @@ from automaton_gui.framework import KeyNames
 
 PASSTHROUGH = "~"
 GAME_KEY_MODIFIERS = "^!+"
-GAME_KEY_PUNCTUATION = "-=[];,./\\^_+{}:<>?|"
 GAME_KEY_NAMED = {
     name.lower(): name
     for name in ("Tab", "Enter", "Space", "Backspace", "Delete", "Insert", "Home", "End", "PgUp", "PgDn", "Up", "Down",
                  "Left", "Right", "CapsLock", "NumLock", "ScrollLock", "PrintScreen", "Pause", "AppsKey")
 }
-MAPVK_VK_TO_CHAR = 2
-DEAD_KEY_FLAG = 0x80000000
 PASSTHROUGH_CHARS = "~*$"
 MODIFIER_ORDER = "^!+#"
 MODIFIER_NAMES = {"^": "Ctrl", "!": "Alt", "+": "Shift", "#": "Win"}
@@ -216,17 +213,14 @@ def _GameKeyName(name: str) -> str | None:
     if lowered in GAME_KEY_NAMED:
         return GAME_KEY_NAMED[lowered]
     raw = _RAW_VK.match(name)
-    return _PunctuationForVk(int(raw[1], 16)) if raw else None
+    return _LayoutKeyName(int(raw[1], 16)) if raw else None
 
 
-def _PunctuationForVk(vk: int) -> str | None:
-    if sys.platform != "win32":
-        return None
-    result = ctypes.windll.user32.MapVirtualKeyW(vk, MAPVK_VK_TO_CHAR)
-    if result == 0 or result & DEAD_KEY_FLAG:
-        return None
-    character = chr(result & 0xFFFF)
-    return character if character in GAME_KEY_PUNCTUATION else None
+# Punctuation keys stay as vkXX: their character changes per layout and some are dead keys (^ on German).
+def _LayoutKeyName(vk: int) -> str | None:
+    if any(low <= vk <= high for low, high in OEM_VK_RANGES):
+        return f"vk{vk:02X}"
+    return None
 
 
 def ModifierLabel(symbol: str) -> str:

@@ -114,6 +114,13 @@ class GuiHost:
             stillOpen.append(window)
         self._openWindows = stillOpen
 
+    # Called from the macro thread, so it only reads flags and the native id the window already has.
+    def ShownWindowHwnd(self) -> int:
+        for window in reversed(self._openWindows):
+            if window.isVisible():
+                return int(window.effectiveWinId())
+        return 0
+
     def _NotifyAhk(self, message: Message) -> None:
         self._notify(message)
 
