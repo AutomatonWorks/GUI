@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from typing import Callable
 
-from PySide6.QtCore import QEvent, Qt, Signal
-from PySide6.QtWidgets import QHBoxLayout, QLineEdit, QPushButton, QWidget
+from PySide6.QtCore import QEvent, QPoint, Qt, Signal
+from PySide6.QtGui import QAction, QCursor, QIcon, QPalette
+from PySide6.QtWidgets import QHBoxLayout, QLineEdit, QMenu, QPushButton, QScrollArea, QWidget
 
 from automaton_gui.framework import Hotkeys
 from automaton_gui.framework.ErrorBubble import ErrorBubble
+from automaton_gui.framework.RightClickIcon import RightClickIcon
 from automaton_gui.I18n import T
 
 ICON_FONT_FAMILY = "Segoe MDL2 Assets"
@@ -24,6 +26,8 @@ MOUSE_BUTTON_NUMBERS = {
     Qt.MouseButton.BackButton: 4,
     Qt.MouseButton.ForwardButton: 5,
 }
+# Keys a field cannot take by pressing them: Tab and Shift+Tab move between fields, a bare right-click opens this menu
+KEY_MENU_HOTKEYS = (Hotkeys.Hotkey("Tab"), Hotkeys.Hotkey("Tab", "+"), Hotkeys.Hotkey("RButton"))
 
 ConflictChecker = Callable[[str], str]
 
@@ -44,12 +48,20 @@ class HotkeyEdit(QLineEdit):
         self._allowModifiers = allowModifiers
         self._value = ""
         self._listening = False
+        self._keyMenuPending = False
         self._capture = Hotkeys.Capture()
         self.setReadOnly(True)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
+        menuHint = self._Text("hotkey.menu_hint", "Right-click for Tab, Shift + Tab and the right mouse button")
+        self.setToolTip(menuHint)
+        self._keyMenuAction = self.addAction(QIcon(), QLineEdit.ActionPosition.TrailingPosition)
+        self._keyMenuAction.setToolTip(menuHint)
+        self._keyMenuAction.triggered.connect(lambda: self._ShowKeyMenu(QCursor.pos()))
+        self._keyMenuAction.setVisible(False)
         self.onCandidate: Callable[[str], bool] = lambda value: True
         self.onInvalid: Callable[[Hotkeys.Hotkey | None], None] = lambda hotkey: None
         self.prefixSource: Callable[[], str] = lambda: self._value
+        self.runKeyMenu: Callable[[QMenu, QPoint], QAction | None] = lambda menu, position: menu.exec(position)
         self._ShowIdle()
 
     @property
@@ -73,11 +85,14 @@ class HotkeyEdit(QLineEdit):
         self._listening = True
         self._capture.Reset()
         self.setText("")
-        self.setPlaceholderText(self._Text("hotkey.press_keys", "Press a key or combination (Esc to cancel)"))
+        self.setPlaceholderText(self._Text("hotkey.press_keys", "Press a key or key combo"))
+        self._keyMenuAction.setIcon(RightClickIcon(self.palette().color(QPalette.ColorRole.PlaceholderText)))
+        self._keyMenuAction.setVisible(True)
 
     def StopListening(self) -> None:
         self._listening = False
         self._capture.Reset()
+        self._keyMenuAction.setVisible(False)
         self._ShowIdle()
 
     def _Text(self, key: str, default: str) -> str:
@@ -105,6 +120,24 @@ class HotkeyEdit(QLineEdit):
         self._value = value
         self.StopListening()
         self.capturedValue.emit(value)
+        self._AdvanceToNextField()
+
+    # Setting every key in a row: the next field on screen starts listening, Tab still skips it.
+    def _AdvanceToNextField(self) -> None:
+        fields = [field for field in self.window().findChildren(HotkeyEdit)
+                  if field.isVisible() and field.isEnabled()]
+        if self not in fields:
+            return
+        index = fields.index(self)
+        if index + 1 < len(fields):
+            nextField = fields[index + 1]
+            nextField.setFocus(Qt.FocusReason.TabFocusReason)
+            # Only Tab scrolls a QScrollArea to the focused widget; focus set from code does not.
+            parent = nextField.parentWidget()
+            while (parent is not None) and (not isinstance(parent, QScrollArea)):
+                parent = parent.parentWidget()
+            if parent is not None:
+                parent.ensureWidgetVisible(nextField)
 
     def _ValueFrom(self, hotkey: Hotkeys.Hotkey) -> str | None:
         if self._gameKey:
@@ -115,17 +148,34 @@ class HotkeyEdit(QLineEdit):
 
     def focusInEvent(self, event) -> None:
         super().focusInEvent(event)
-        if event.reason() != Qt.FocusReason.PopupFocusReason:
+        reason = event.reason()
+        if reason != Qt.FocusReason.PopupFocusReason:
             self.StartListening()
 
     def focusOutEvent(self, event) -> None:
         super().focusOutEvent(event)
         self.StopListening()
 
+    # Qt only asks this for a bare Tab or Shift+Tab; Ctrl/Alt+Tab always reach keyPressEvent.
+    # Those two always move between fields; the right-click menu binds them.
     def focusNextPrevChild(self, next_: bool) -> bool:
         if self._listening:
-            return False
+            if not self._capture.HoldsNothingButShift():
+                return False
+            self.StopListening()
         return super().focusNextPrevChild(next_)
+
+    def KeyMenuChoices(self) -> list[Hotkeys.Hotkey]:
+        return [hotkey for hotkey in KEY_MENU_HOTKEYS if self._ValueFrom(hotkey) is not None]
+
+    def _ShowKeyMenu(self, position) -> None:
+        menu = QMenu(self)
+        actions = {menu.addAction(hotkey.Display()): hotkey for hotkey in self.KeyMenuChoices()}
+        chosen = self.runKeyMenu(menu, position)
+        if chosen in actions:
+            self._Finish(actions[chosen])
+        elif self.hasFocus():
+            self.StartListening()
 
     def event(self, event: QEvent) -> bool:
         if self._listening and event.type() == QEvent.Type.ShortcutOverride:
@@ -135,6 +185,11 @@ class HotkeyEdit(QLineEdit):
 
     def mousePressEvent(self, event) -> None:
         button = event.button()
+        # A bare right-click opens the key menu; with a key or modifier held it is part of the hotkey.
+        if self._listening and (button == Qt.MouseButton.RightButton) and (not self._capture.active):
+            self._keyMenuPending = True
+            event.accept()
+            return
         if self._listening and button in MOUSE_BUTTON_NUMBERS:
             number = MOUSE_BUTTON_NUMBERS[button]
             self._capture.PressMouse(f"mouse{number}", number)
@@ -147,6 +202,11 @@ class HotkeyEdit(QLineEdit):
 
     def mouseReleaseEvent(self, event) -> None:
         button = event.button()
+        if (button == Qt.MouseButton.RightButton) and self._keyMenuPending:
+            self._keyMenuPending = False
+            event.accept()
+            self._ShowKeyMenu(event.globalPosition().toPoint())
+            return
         if self._listening and button in MOUSE_BUTTON_NUMBERS:
             self._Release(f"mouse{MOUSE_BUTTON_NUMBERS[button]}")
             event.accept()
@@ -258,6 +318,8 @@ class HotkeyField(QWidget):
         button.setStyleSheet(ICON_BUTTON_STYLE)
         button.setFixedWidth(ICON_BUTTON_WIDTH)
         button.setToolTip(tooltip)
+        # Mouse only: Tab walks the key fields, and Backspace/Delete are keys a field can capture
+        button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         return button
 
     def _PrefixSource(self) -> str:

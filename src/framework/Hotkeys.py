@@ -297,6 +297,9 @@ class Capture:
     def active(self) -> bool:
         return bool(self._held)
 
+    def HoldsNothingButShift(self) -> bool:
+        return (not self._keys) and (self._modifierSymbols in ("", "+"))
+
     def Press(self, token: str, vk: int, extended: bool = False) -> None:
         if token in self._held:
             return
