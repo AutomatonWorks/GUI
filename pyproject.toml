@@ -1,6 +1,6 @@
 [project]
 name = "automaton-gui"
-version = "0.1.1"
+version = "0.1.2"
 description = "Qt GUI shared by the automatons"
 requires-python = ">=3.14"
 dependencies = ["PySide6>=6.11.2"]
